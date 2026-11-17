@@ -1,6 +1,6 @@
 # Lead intake case study. Fully separate from every other service on this box.
 # Nothing here listens on a public interface:
-#   app  -> 127.0.0.1:3310, Apache proxies case.kyleyoung.opsharbor.io to it
+#   app  -> 127.0.0.1:3310, Apache proxies case.opsharbor.io to it
 #   n8n  -> 127.0.0.1:5690, reachable only over Tailscale (tailscale serve)
 #   db   -> no published port at all
 name: leadcase
