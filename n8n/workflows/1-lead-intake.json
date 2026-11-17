@@ -1,0 +1,738 @@
+{
+  "name": "Lead Intake: Form to Logs",
+  "nodes": [
+    {
+      "id": "node-1",
+      "name": "Form submitted",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-intake",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "gQfA35Fb4MLuDt1w",
+          "name": "Leadcase app secret"
+        }
+      },
+      "webhookId": "ee5d57e9-d231-4b1c-b2de-f0e78433a915"
+    },
+    {
+      "id": "node-2",
+      "name": "Clean input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Clean input (Code node, run once for all items).\n// Turns the raw form payload into the values every later step relies on.\n// Every rule below exists because of something in the sample data.\nconst body = $input.first().json.body || {};\n\nconst str = (v) => (v == null ? '' : String(v));\nconst squash = (s) => str(s).replace(/\\s+/g, ' ').trim();\n\n// Email: \"John@Example.com \" and \"john@example.com\" are the same person.\nconst email = str(body.email).trim().toLowerCase();\nif (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {\n  throw new Error(`Invalid email reached n8n: \"${email}\"`);\n}\n\n// Interests: the sample has \"Api\" and \"API\" for the same thing, and\n// people type commas, semicolons, slashes or new lines.\nconst CANON = { api: 'API', apis: 'API', doc: 'Docs', docs: 'Docs', documentation: 'Docs',\n  support: 'Support', training: 'Training', trainings: 'Training' };\nconst titleCase = (s) => s.toLowerCase().replace(/\\b\\p{L}/gu, (c) => c.toUpperCase());\nconst seen = new Set();\nconst interests = [];\nfor (const raw of str(body.interests).split(/[,;\\/|\\n]+/)) {\n  const cleaned = squash(raw).replace(/^[-*•]\\s*/, '').slice(0, 50);\n  if (!cleaned) continue;\n  const key = cleaned.toLowerCase();\n  const name = CANON[key] || titleCase(cleaned);\n  if (seen.has(name.toLowerCase())) continue;\n  seen.add(name.toLowerCase());\n  interests.push(name);\n  if (interests.length >= 20) break;\n}\n\n// Urgent: the sample writes \"urgent:\" and \"urgent -\", so match the word,\n// any case, any punctuation. \"Not urgent\" is a real thing people write,\n// and sending them the urgent email would be wrong, so it counts as welcome.\nconst comment = str(body.comment).trim().slice(0, 2000);\nconst mentionsUrgent = /\\burgent(ly)?\\b/i.test(comment);\nconst negated = /\\b(not|isn'?t|no|non)[\\s-]+(that\\s+|very\\s+|super\\s+)?urgent/i.test(comment);\nconst type = mentionsUrgent && !negated ? 'urgent' : 'welcome';\n\nconst utm = squash(body.utm_source).toLowerCase().slice(0, 100) || 'direct';\n\nreturn [{\n  json: {\n    request_id: str(body.request_id),\n    full_name: squash(body.full_name).slice(0, 120),\n    email,\n    email_raw: str(body.email).slice(0, 254),\n    comment,\n    interests_raw: str(body.interests).slice(0, 1000),\n    interests,\n    interests_count: interests.length,\n    utm_source: utm,\n    type,\n    urgent_reason: mentionsUrgent ? (negated ? 'says not urgent' : 'contains \"urgent\"') : 'no \"urgent\" in comment',\n    is_test: body.is_test === true,\n  },\n}];\n"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "node-3",
+      "name": "Add to Leads",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO leads (request_id, full_name, email, email_raw, comment, interests_raw, utm_source, is_test)\nVALUES (coalesce(nullif($1, '')::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8::boolean)\nON CONFLICT (request_id) DO UPDATE SET request_id = EXCLUDED.request_id\nRETURNING id AS lead_id, (xmax = 0) AS is_new_request;",
+        "options": {
+          "queryReplacement": "={{ [ $json.request_id, $json.full_name, $json.email, $json.email_raw, $json.comment, $json.interests_raw, $json.utm_source, $json.is_test ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "RWGBaTeYCTo0Qu9b",
+          "name": "Leadcase Postgres"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "node-4",
+      "name": "Same request twice?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.is_new_request }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-5",
+      "name": "Claim email",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Atomic \"already processed?\" check. The primary key on email means two\n-- submits at the same moment cannot both win. A previously FAILED email\n-- can be claimed again so a resubmit retries it.\nINSERT INTO leads_log (email, lead_id, is_test)\nVALUES ($1, $2, $3::boolean)\nON CONFLICT (email) DO UPDATE\n  SET lead_id = EXCLUDED.lead_id, status = 'processing', type = NULL,\n      interests_count = NULL, email_sent_at = NULL, updated_at = now()\n  WHERE leads_log.status = 'failed'\nRETURNING email;",
+        "options": {
+          "queryReplacement": "={{ [ $('Clean input').first().json.email, $('Add to Leads').first().json.lead_id, $('Clean input').first().json.is_test ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "RWGBaTeYCTo0Qu9b",
+          "name": "Leadcase Postgres"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "node-6",
+      "name": "Already processed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-7",
+      "name": "Mark duplicate",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1320,
+        160
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE leads SET status = 'skipped_duplicate', status_note = 'email already in Leads Log'\nWHERE id = $1 RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [ $('Add to Leads').first().json.lead_id ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "RWGBaTeYCTo0Qu9b",
+          "name": "Leadcase Postgres"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "node-8",
+      "name": "Mirror duplicate to sheet",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1540,
+        160
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "jY1qKeR3epPl6IFD"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $('Add to Leads').first().json.lead_id }}"
+          },
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "node-9",
+      "name": "Respond: skipped",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1760,
+        160
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'skipped_duplicate', email: $('Clean input').first().json.email }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "node-10",
+      "name": "Respond: same request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        880,
+        80
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'skipped_duplicate', email: $('Clean input').first().json.email, note: 'same request received twice' }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "node-11",
+      "name": "Write Interest Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1320,
+        420
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ins AS (\n  INSERT INTO interest_log (lead_id, email, interest, is_test)\n  SELECT $1, $2, x, $4::boolean FROM jsonb_array_elements_text($3::jsonb) AS x\n  ON CONFLICT (email, interest) DO NOTHING\n  RETURNING 1\n)\nSELECT count(*)::int AS inserted FROM ins;",
+        "options": {
+          "queryReplacement": "={{ [ $('Add to Leads').first().json.lead_id, $('Clean input').first().json.email, JSON.stringify($('Clean input').first().json.interests), $('Clean input').first().json.is_test ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "RWGBaTeYCTo0Qu9b",
+          "name": "Leadcase Postgres"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "node-12",
+      "name": "Build email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        420
+      ],
+      "parameters": {
+        "jsCode": "// Build email (Code node, run once for all items).\n// The brief says the two templates are in the spreadsheet. They aren't,\n// so these are mine. Plain, short, and they say what happens next.\nconst lead = $('Clean input').first().json;\nconst first = (lead.full_name.split(' ')[0] || 'there').replace(/[<>&\"]/g, '');\nconst esc = (s) => String(s).replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\n\nconst NEXT = {\n  API: 'API reference and keys: we will send setup steps for your account.',\n  Docs: 'Docs: start with the quick-start guide, it takes about 10 minutes.',\n  Support: 'Support: reply to this email any time and it reaches a person.',\n  Training: 'Training: we run live onboarding sessions every week, we will send dates.',\n};\nconst lines = lead.interests.map((i) => NEXT[i] || `${i}: we will follow up with what we have on this.`);\n\nlet subject, text;\nif (lead.type === 'urgent') {\n  subject = 'We got your urgent request';\n  text = [\n    `Hi ${first},`,\n    '',\n    'Thanks for reaching out. Your message is marked urgent, so a person on our team will contact you within 1 business hour.',\n    '',\n    'What you wrote:',\n    `\"${lead.comment}\"`,\n    '',\n    'If anything changes before then, just reply to this email.',\n    '',\n    'The Team',\n  ].join('\\n');\n} else {\n  subject = `Welcome, ${first}`;\n  text = [\n    `Hi ${first},`,\n    '',\n    'Thanks for getting in touch. Here is what happens next:',\n    '',\n    ...(lines.length ? lines.map((l) => `- ${l}`) : ['- We will reply to your message within 1 business day.']),\n    '',\n    'Questions in the meantime? Reply here.',\n    '',\n    'The Team',\n  ].join('\\n');\n}\n\n// Sandbox: test submissions and example.com addresses never reach a real\n// inbox. They go to the sandbox address with the real recipient in the subject.\nconst sandbox = lead.is_test || /@(example\\.(com|org|net)|test\\.invalid)$/i.test(lead.email);\nconst to = sandbox ? $env.LEADCASE_SANDBOX_EMAIL : lead.email;\nif (sandbox) subject = `[SANDBOX to ${lead.email}] ${subject}`;\n\nconst html = `<div style=\"font-family:Arial,sans-serif;font-size:15px;line-height:1.5;color:#14171f\">${\n  esc(text).split('\\n').map((l) => (l ? `<p style=\"margin:0 0 4px\">${l}</p>` : '<br>')).join('')\n}</div>`;\n\nreturn [{ json: { to, subject, text, html, sandbox, type: lead.type } }];\n"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "node-13",
+      "name": "Send email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1760,
+        420
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.text }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Lead Intake"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "node-14",
+      "name": "Write Leads Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1980,
+        420
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH g AS (\n  UPDATE leads_log\n     SET type = $2, interests_count = $3, status = 'done',\n         email_sent_at = now(), email_message_id = $4, updated_at = now()\n   WHERE email = $1\n  RETURNING lead_id\n)\nUPDATE leads SET status = 'processed', status_note = $5\n  FROM g WHERE leads.id = g.lead_id\nRETURNING leads.id;",
+        "options": {
+          "queryReplacement": "={{ [ $('Clean input').first().json.email, $('Clean input').first().json.type, $('Clean input').first().json.interests_count, $json.id ?? '', $('Clean input').first().json.urgent_reason + ($('Build email').first().json.sandbox ? '; sandbox email' : '') ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "RWGBaTeYCTo0Qu9b",
+          "name": "Leadcase Postgres"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "node-15",
+      "name": "Mirror lead to sheet",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        420
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "jY1qKeR3epPl6IFD"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $('Add to Leads').first().json.lead_id }}"
+          },
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "node-16",
+      "name": "Respond: processed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2420,
+        420
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'processed', email: $('Clean input').first().json.email, type: $('Clean input').first().json.type, interests_count: $('Clean input').first().json.interests_count, interests: $('Clean input').first().json.interests }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "node-17",
+      "name": "Respond: bad input",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        440,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'validation_error', message: 'The form data was not valid.' }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "node-18",
+      "name": "Mark failed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1980,
+        700
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH a AS (\n  UPDATE leads SET status = 'failed', status_note = left($2, 500) WHERE id = $1 RETURNING 1\n), b AS (\n  UPDATE leads_log SET status = 'failed', updated_at = now()\n   WHERE email = $3 AND status = 'processing' RETURNING 1\n)\nSELECT (SELECT count(*) FROM a) AS leads_marked, (SELECT count(*) FROM b) AS log_marked;",
+        "options": {
+          "queryReplacement": "={{ [ $('Add to Leads').isExecuted ? ($('Add to Leads').first().json.lead_id ?? 0) : 0, String($json.error?.message ?? $json.error ?? 'unknown error'), $('Clean input').first().json.email ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "RWGBaTeYCTo0Qu9b",
+          "name": "Leadcase Postgres"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "node-19",
+      "name": "Respond: failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2200,
+        700
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'processing_failed', message: 'We could not finish processing this lead.' }) }}",
+        "options": {
+          "responseCode": 500
+        }
+      }
+    },
+    {
+      "id": "node-20",
+      "name": "Fail the run (fires alert)",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        2420,
+        700
+      ],
+      "parameters": {
+        "errorMessage": "={{ 'Lead processing failed for ' + $('Clean input').first().json.email + '. The lead is marked failed; the step that broke is shown in this run.' }}"
+      }
+    }
+  ],
+  "connections": {
+    "Form submitted": {
+      "main": [
+        [
+          {
+            "node": "Clean input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean input": {
+      "main": [
+        [
+          {
+            "node": "Add to Leads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: bad input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to Leads": {
+      "main": [
+        [
+          {
+            "node": "Same request twice?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Same request twice?": {
+      "main": [
+        [
+          {
+            "node": "Respond: same request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Claim email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim email": {
+      "main": [
+        [
+          {
+            "node": "Already processed?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already processed?": {
+      "main": [
+        [
+          {
+            "node": "Mark duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Write Interest Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark duplicate": {
+      "main": [
+        [
+          {
+            "node": "Mirror duplicate to sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mirror duplicate to sheet": {
+      "main": [
+        [
+          {
+            "node": "Respond: skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Interest Log": {
+      "main": [
+        [
+          {
+            "node": "Build email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build email": {
+      "main": [
+        [
+          {
+            "node": "Send email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send email": {
+      "main": [
+        [
+          {
+            "node": "Write Leads Log",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Leads Log": {
+      "main": [
+        [
+          {
+            "node": "Mirror lead to sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mirror lead to sheet": {
+      "main": [
+        [
+          {
+            "node": "Respond: processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark failed": {
+      "main": [
+        [
+          {
+            "node": "Respond: failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond: failed": {
+      "main": [
+        [
+          {
+            "node": "Fail the run (fires alert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "errorWorkflow": "etrPeKRsXxuHCSh8"
+  }
+}

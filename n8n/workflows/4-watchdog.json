@@ -1,0 +1,346 @@
+{
+  "name": "Lead Intake: Watchdog",
+  "nodes": [
+    {
+      "id": "node-1",
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-2",
+      "name": "Check Gmail connection",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "id": "node-3",
+      "name": "Find problems",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Watchdog: one statement that finds every current problem, opens alerts for\n-- new ones, resolves alerts whose problem is gone, and records a heartbeat.\n-- $1 = is the Gmail connection working (boolean).\nWITH cur (kind, subject_key, details) AS (\n  -- Claimed but never finished (crashed between steps).\n  SELECT 'stuck_processing', email::text,\n         jsonb_build_object('note', 'processing since ' || to_char(updated_at, 'YYYY-MM-DD HH24:MI'))\n    FROM leads_log WHERE status = 'processing' AND updated_at < now() - interval '5 minutes'\n  UNION ALL\n  -- Failed and not retried yet.\n  SELECT 'lead_failed', email::text, jsonb_build_object('note', 'lead ' || lead_id)\n    FROM leads_log WHERE status = 'failed'\n  UNION ALL\n  -- Received but the run died before it decided anything.\n  SELECT 'received_not_processed', 'lead ' || id, jsonb_build_object('note', email::text)\n    FROM leads WHERE status = 'received' AND received_at < now() - interval '5 minutes'\n  UNION ALL\n  -- Leads Log says N interests but Interest Log has a different number.\n  SELECT 'count_mismatch', g.email::text,\n         jsonb_build_object('note', 'Leads Log says ' || g.interests_count || ', Interest Log has ' || coalesce(c.n, 0))\n    FROM leads_log g\n    LEFT JOIN (SELECT email, count(*) AS n FROM interest_log GROUP BY email) c ON c.email = g.email\n   WHERE g.status = 'done' AND g.interests_count <> coalesce(c.n, 0)\n  UNION ALL\n  -- Marked done but there is no record of the email going out.\n  SELECT 'missing_email', email::text, '{}'::jsonb\n    FROM leads_log WHERE status = 'done' AND email_sent_at IS NULL\n  UNION ALL\n  -- The duplicate check should make this impossible. If it ever happens, say so.\n  SELECT 'duplicate_slipped', email::text, jsonb_build_object('note', count(*) || ' processed submissions')\n    FROM leads WHERE status = 'processed' GROUP BY email HAVING count(*) > 1\n  UNION ALL\n  -- In Postgres but still not in the Google Sheet after 15 minutes.\n  SELECT 'sheet_not_synced', 'lead ' || id, jsonb_build_object('note', email::text)\n    FROM leads WHERE NOT sheet_synced AND status <> 'received' AND received_at < now() - interval '15 minutes'\n  UNION ALL\n  SELECT 'gmail_down', 'gmail', jsonb_build_object('note', 'could not read the Gmail profile')\n   WHERE NOT $1::boolean\n),\nopened AS (\n  INSERT INTO alerts (kind, subject_key, details)\n  SELECT kind, subject_key, details FROM cur\n  ON CONFLICT (kind, subject_key) WHERE resolved_at IS NULL DO NOTHING\n  RETURNING id, kind, subject_key, details\n),\nresolved AS (\n  UPDATE alerts a SET resolved_at = now()\n   WHERE a.resolved_at IS NULL\n     AND NOT EXISTS (SELECT 1 FROM cur WHERE cur.kind = a.kind AND cur.subject_key = a.subject_key)\n  RETURNING id, kind, subject_key, details, notified_at\n),\nbeat AS (\n  INSERT INTO heartbeats (name, beat_at, details)\n  VALUES ('watchdog', now(), jsonb_build_object('problems', (SELECT count(*) FROM cur)))\n  ON CONFLICT (name) DO UPDATE SET beat_at = now(), details = EXCLUDED.details\n  RETURNING 1\n)\nSELECT\n  (SELECT coalesce(json_agg(o), '[]'::json) FROM opened o) AS opened,\n  -- Open alerts we never managed to email (e.g. Gmail was down): try again.\n  (SELECT coalesce(json_agg(p), '[]'::json) FROM (\n     SELECT id, kind, subject_key, details FROM alerts\n      WHERE resolved_at IS NULL AND notified_at IS NULL\n        AND NOT EXISTS (SELECT 1 FROM resolved r WHERE r.id = alerts.id)) p) AS pending,\n  -- Only send \"all clear\" for problems somebody was actually told about.\n  (SELECT coalesce(json_agg(r), '[]'::json) FROM resolved r WHERE r.notified_at IS NOT NULL) AS resolved,\n  (SELECT coalesce(json_agg(email), '[]'::json) FROM alert_recipients WHERE active) AS recipients,\n  (SELECT coalesce(json_agg(id), '[]'::json) FROM leads\n    WHERE NOT sheet_synced AND status <> 'received'\n      AND received_at < now() - interval '5 minutes' AND received_at > now() - interval '1 day') AS resync_ids,\n  (SELECT count(*) FROM beat) AS heartbeat;\n",
+        "options": {
+          "queryReplacement": "={{ [ !!$('Check Gmail connection').first().json.emailAddress ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "RWGBaTeYCTo0Qu9b",
+          "name": "Leadcase Postgres"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "node-4",
+      "name": "Anything to report?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c3",
+              "leftValue": "={{ $json.opened.length + $json.pending.length + $json.resolved.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-5",
+      "name": "Build alert email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// Build alert email (Code node, run once for all items).\n// Input: one row from the watchdog query with new + resolved alerts.\nconst r = $input.first().json;\nconst opened = r.opened || [];\nconst resolved = r.resolved || [];\n\nconst LABEL = {\n  stuck_processing: 'Lead stuck mid-processing',\n  received_not_processed: 'Lead received but never finished',\n  lead_failed: 'Lead failed',\n  count_mismatch: 'Leads Log and Interest Log disagree',\n  missing_email: 'Lead processed but no email was sent',\n  sheet_not_synced: 'Lead missing from the Google Sheet',\n  gmail_down: 'Gmail connection is broken',\n  duplicate_slipped: 'Same email processed twice',\n};\nconst line = (a) => `- ${LABEL[a.kind] || a.kind}: ${a.subject_key}${a.details?.note ? ` (${a.details.note})` : ''}`;\n\nconst parts = [];\nif (opened.length) parts.push(`New problems (${opened.length}):`, ...opened.map(line), '');\nif (resolved.length) parts.push(`Fixed since last check (${resolved.length}):`, ...resolved.map(line), '');\nparts.push(`Logs: ${$env.LEADCASE_PUBLIC_URL}/logs`, `n8n runs: ${$env.LEADCASE_EDITOR_URL}/home/executions`);\n\nconst subject = opened.length\n  ? `[Lead intake] ${opened.length} new problem${opened.length > 1 ? 's' : ''}: ${LABEL[opened[0].kind] || opened[0].kind}`\n  : `[Lead intake] All clear (${resolved.length} fixed)`;\n\nreturn [{ json: { to: (r.recipients || []).join(','), subject, text: parts.join('\\n'), opened_ids: opened.map((a) => a.id), resolved_ids: resolved.map((a) => a.id) } }];\n"
+      }
+    },
+    {
+      "id": "node-6",
+      "name": "Send alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        -100
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.text }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Lead Intake"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "node-7",
+      "name": "Mark alerts sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1320,
+        -160
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH o AS (\n  UPDATE alerts SET notified_at = now()\n   WHERE id IN (SELECT jsonb_array_elements_text($1::jsonb)::bigint) AND notified_at IS NULL RETURNING 1\n), r AS (\n  UPDATE alerts SET resolved_notified_at = now()\n   WHERE id IN (SELECT jsonb_array_elements_text($2::jsonb)::bigint) RETURNING 1\n)\nSELECT (SELECT count(*) FROM o) AS opened_marked, (SELECT count(*) FROM r) AS resolved_marked;",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($('Build alert email').first().json.opened_ids), JSON.stringify($('Build alert email').first().json.resolved_ids) ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "RWGBaTeYCTo0Qu9b",
+          "name": "Leadcase Postgres"
+        }
+      }
+    },
+    {
+      "id": "node-8",
+      "name": "Record alert send failure",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1320,
+        20
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO error_events (workflow, node, message) VALUES ('Watchdog', 'Send alert', left($1, 1000)) RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [ String($json.error?.message ?? $json.error ?? 'send failed') ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "RWGBaTeYCTo0Qu9b",
+          "name": "Leadcase Postgres"
+        }
+      }
+    },
+    {
+      "id": "node-9",
+      "name": "Leads to re-sync",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        160
+      ],
+      "parameters": {
+        "jsCode": "// Self-heal: leads that never made it into the sheet get another try.\nreturn ($('Find problems').first().json.resync_ids || []).map((lead_id) => ({ json: { lead_id } }));"
+      }
+    },
+    {
+      "id": "node-10",
+      "name": "Re-sync to sheet",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        160
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "jY1qKeR3epPl6IFD"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $json.lead_id }}"
+          },
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Every 15 minutes": {
+      "main": [
+        [
+          {
+            "node": "Check Gmail connection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Gmail connection": {
+      "main": [
+        [
+          {
+            "node": "Find problems",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find problems": {
+      "main": [
+        [
+          {
+            "node": "Anything to report?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Leads to re-sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything to report?": {
+      "main": [
+        [
+          {
+            "node": "Build alert email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build alert email": {
+      "main": [
+        [
+          {
+            "node": "Send alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send alert": {
+      "main": [
+        [
+          {
+            "node": "Mark alerts sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record alert send failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leads to re-sync": {
+      "main": [
+        [
+          {
+            "node": "Re-sync to sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "errorWorkflow": "etrPeKRsXxuHCSh8"
+  }
+}

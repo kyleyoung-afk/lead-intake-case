@@ -1,0 +1,190 @@
+{
+  "name": "Lead Intake: Mirror to Sheet",
+  "nodes": [
+    {
+      "id": "node-1",
+      "name": "When called with a lead id",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "lead_id",
+              "type": "number"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-2",
+      "name": "Get lead",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT json_build_object(\n  'lead', (SELECT row_to_json(l) FROM leads l WHERE l.id = $1),\n  'log', (SELECT row_to_json(g) FROM leads_log g WHERE g.lead_id = $1 AND g.status = 'done'),\n  'interests', (SELECT coalesce(json_agg(i.interest ORDER BY i.id), '[]'::json) FROM interest_log i WHERE i.lead_id = $1)\n) AS data\nWHERE EXISTS (SELECT 1 FROM leads WHERE id = $1 AND NOT sheet_synced);",
+        "options": {
+          "queryReplacement": "={{ [ $json.lead_id ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "RWGBaTeYCTo0Qu9b",
+          "name": "Leadcase Postgres"
+        }
+      }
+    },
+    {
+      "id": "node-3",
+      "name": "Get tab ids",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ `https://sheets.googleapis.com/v4/spreadsheets/${$env.LEADCASE_SHEET_ID}?fields=sheets.properties(sheetId,title)` }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "node-4",
+      "name": "Build sheet rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Build sheet rows (Code node, run once for all items).\r\n// One Sheets API batchUpdate with an appendCells request per tab, so a lead\r\n// lands in all three tabs together or not at all.\r\nconst data = $('Get lead').first().json.data;\r\nconst tabs = Object.fromEntries(($input.first().json.sheets || []).map((s) => [s.properties.title, s.properties.sheetId]));\r\nfor (const t of ['Leads', 'Interest Log', 'Leads Log']) {\r\n  if (tabs[t] === undefined) throw new Error(`Sheet tab \"${t}\" not found`);\r\n}\r\n\r\nconst s = (v) => ({ userEnteredValue: { stringValue: String(v ?? '') } });\r\nconst num = (v) => ({ userEnteredValue: { numberValue: Number(v) } });\r\nconst ts = (d) => new Date(d).toISOString().replace('T', ' ').slice(0, 19);\r\nconst append = (title, rows) => ({ appendCells: { sheetId: tabs[title], rows: rows.map((values) => ({ values })), fields: 'userEnteredValue' } });\r\n\r\nconst lead = data.lead;\r\nconst requests = [\r\n  // Leads: every submission, duplicates included, exactly as received.\r\n  append('Leads', [[s(ts(lead.received_at)), s(lead.full_name), s(lead.email_raw), s(lead.comment), s(lead.interests_raw), s(lead.utm_source)]]),\r\n];\r\nif (data.log) {\r\n  if (data.interests.length) {\r\n    requests.push(append('Interest Log', data.interests.map((i) => [s(ts(lead.received_at)), s(lead.email), s(i)])));\r\n  }\r\n  requests.push(append('Leads Log', [[s(lead.email), s(data.log.type), num(data.log.interests_count)]]));\r\n}\r\nreturn [{ json: { requests } }];\r\n"
+      }
+    },
+    {
+      "id": "node-5",
+      "name": "Append to sheet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ `https://sheets.googleapis.com/v4/spreadsheets/${$env.LEADCASE_SHEET_ID}:batchUpdate` }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ requests: $json.requests }) }}",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "node-6",
+      "name": "Mark synced",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE leads SET sheet_synced = true WHERE id = $1 RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [ $('When called with a lead id').first().json.lead_id ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "RWGBaTeYCTo0Qu9b",
+          "name": "Leadcase Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When called with a lead id": {
+      "main": [
+        [
+          {
+            "node": "Get lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get lead": {
+      "main": [
+        [
+          {
+            "node": "Get tab ids",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get tab ids": {
+      "main": [
+        [
+          {
+            "node": "Build sheet rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build sheet rows": {
+      "main": [
+        [
+          {
+            "node": "Append to sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to sheet": {
+      "main": [
+        [
+          {
+            "node": "Mark synced",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "name": "Lead Intake: Error Alerts",
+  "nodes": [
+    {
+      "id": "node-1",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "node-2",
+      "name": "Log error",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO error_events (workflow, node, message, execution_id, execution_url)\nVALUES ($1, $2, $3, $4, $5)\nRETURNING (SELECT coalesce(string_agg(email::text, ','), '') FROM alert_recipients WHERE active) AS recipients;",
+        "options": {
+          "queryReplacement": "={{ [ $json.workflow?.name ?? 'unknown', $json.execution?.lastNodeExecuted ?? 'unknown', ($json.execution?.error?.message ?? $json.trigger?.error?.message ?? 'no message').slice(0, 1000), String($json.execution?.id ?? ''), $json.execution?.url ?? '' ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "RWGBaTeYCTo0Qu9b",
+          "name": "Leadcase Postgres"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "node-3",
+      "name": "Email the alert list",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.recipients }}",
+        "subject": "=[Lead intake] FAILED: {{ $('Error Trigger').first().json.workflow.name }} at \"{{ $('Error Trigger').first().json.execution?.lastNodeExecuted ?? 'trigger' }}\"",
+        "emailType": "text",
+        "message": "=Something broke and a run did not finish.\n\nWorkflow: {{ $('Error Trigger').first().json.workflow.name }}\nStep: {{ $('Error Trigger').first().json.execution?.lastNodeExecuted ?? 'trigger' }}\nError: {{ $('Error Trigger').first().json.execution?.error?.message ?? $('Error Trigger').first().json.trigger?.error?.message ?? 'no message' }}\n\nOpen the failed run: {{ $('Error Trigger').first().json.execution?.url ?? $env.LEADCASE_EDITOR_URL }}\nHealth page: {{ $env.LEADCASE_PUBLIC_URL }}/logs",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Lead Intake"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Log error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log error": {
+      "main": [
+        [
+          {
+            "node": "Email the alert list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  }
+}

@@ -1,0 +1,7 @@
+[Unit]
+Description=Lead intake case: allow container reply traffic on br-leadcase
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/leadcase/deploy/firewall.sh

@@ -1,0 +1,9 @@
+[Unit]
+Description=Lead intake case: re-check firewall rule every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+
+[Install]
+WantedBy=timers.target
