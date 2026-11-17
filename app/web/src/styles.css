@@ -16,7 +16,7 @@ body { margin: 0; }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
 .card.narrow { max-width: 560px; margin: 24px auto; }
-.stack { display: grid; gap: 16px; }
+.stack { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
 h1 { font-size: 1.5rem; margin: 0 0 6px; letter-spacing: -0.02em; }
 h2 { font-size: 1.05rem; margin: 0 0 12px; }
 .muted { color: var(--muted); }
