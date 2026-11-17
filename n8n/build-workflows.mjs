@@ -40,13 +40,13 @@ const respond = (name, position, status, body) =>
     responseBody: `={{ JSON.stringify(${body}) }}`,
     options: { responseCode: status },
   });
-const gmailSend = (name, position, to, subject, text, extra = {}) =>
+const gmailSend = (name, position, to, subject, text, extra = {}, emailType = 'text') =>
   node(name, 'n8n-nodes-base.gmail', 2.1, position, {
     resource: 'message',
     operation: 'send',
     sendTo: to,
     subject,
-    emailType: 'text',
+    emailType,
     message: text,
     options: { appendAttribution: false, senderName: 'Lead Intake' },
   }, { credentials: cred.gmail, ...RETRY, ...extra });
@@ -219,7 +219,7 @@ SELECT count(*)::int AS inserted FROM ins;`,
       `[ $('Add to Leads').first().json.lead_id, ${L('email')}, JSON.stringify(${L('interests')}), ${L('is_test')} ]`,
       { onError: 'continueErrorOutput', ...RETRY }),
     codeNode('Build email', [1540, 420], 'build-email.js', { onError: 'continueErrorOutput' }),
-    gmailSend('Send email', [1760, 420], '={{ $json.to }}', '={{ $json.subject }}', '={{ $json.text }}', { onError: 'continueErrorOutput' }),
+    gmailSend('Send email', [1760, 420], '={{ $json.to }}', '={{ $json.subject }}', '={{ $json.html }}', { onError: 'continueErrorOutput' }, 'html'),
     pg('Write Leads Log', [1980, 420],
       `WITH g AS (
   UPDATE leads_log
