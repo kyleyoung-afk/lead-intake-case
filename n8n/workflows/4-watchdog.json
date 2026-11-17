@@ -27,7 +27,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        220,
+        240,
         0
       ],
       "parameters": {
@@ -57,7 +57,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        440,
+        480,
         0
       ],
       "parameters": {
@@ -83,7 +83,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        660,
+        720,
         0
       ],
       "parameters": {
@@ -116,8 +116,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        880,
-        -100
+        960,
+        0
       ],
       "parameters": {
         "jsCode": "// Build alert email (Code node, run once for all items).\n// Input: one row from the watchdog query with new + resolved alerts.\nconst r = $input.first().json;\nconst opened = r.opened || [];\nconst resolved = r.resolved || [];\n\nconst LABEL = {\n  stuck_processing: 'Lead stuck mid-processing',\n  received_not_processed: 'Lead received but never finished',\n  lead_failed: 'Lead failed',\n  count_mismatch: 'Leads Log and Interest Log disagree',\n  missing_email: 'Lead processed but no email was sent',\n  sheet_not_synced: 'Lead missing from the Google Sheet',\n  gmail_down: 'Gmail connection is broken',\n  duplicate_slipped: 'Same email processed twice',\n};\nconst line = (a) => `- ${LABEL[a.kind] || a.kind}: ${a.subject_key}${a.details?.note ? ` (${a.details.note})` : ''}`;\n\nconst parts = [];\nif (opened.length) parts.push(`New problems (${opened.length}):`, ...opened.map(line), '');\nif (resolved.length) parts.push(`Fixed since last check (${resolved.length}):`, ...resolved.map(line), '');\nparts.push(`Logs: ${$env.LEADCASE_PUBLIC_URL}/logs`, `n8n runs: ${$env.LEADCASE_EDITOR_URL}/home/executions`);\n\nconst subject = opened.length\n  ? `[Lead intake] ${opened.length} new problem${opened.length > 1 ? 's' : ''}: ${LABEL[opened[0].kind] || opened[0].kind}`\n  : `[Lead intake] All clear (${resolved.length} fixed)`;\n\nreturn [{ json: { to: (r.recipients || []).join(','), subject, text: parts.join('\\n'), opened_ids: opened.map((a) => a.id), resolved_ids: resolved.map((a) => a.id) } }];\n"
@@ -129,8 +129,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        1100,
-        -100
+        1200,
+        0
       ],
       "parameters": {
         "resource": "message",
@@ -161,8 +161,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1320,
-        -160
+        1440,
+        -100
       ],
       "parameters": {
         "operation": "executeQuery",
@@ -184,8 +184,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1320,
-        20
+        1440,
+        100
       ],
       "parameters": {
         "operation": "executeQuery",
@@ -207,8 +207,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        880,
-        160
+        720,
+        400
       ],
       "parameters": {
         "jsCode": "// Self-heal: leads that never made it into the sheet get another try.\nreturn ($('Find problems').first().json.resync_ids || []).map((lead_id) => ({ json: { lead_id } }));"
@@ -220,8 +220,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        1100,
-        160
+        960,
+        400
       ],
       "parameters": {
         "source": "database",
@@ -257,6 +257,54 @@
         }
       },
       "onError": "continueRegularOutput"
+    },
+    {
+      "id": "note-1",
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -220
+      ],
+      "parameters": {
+        "content": "## Look for quiet failures\nStuck or failed leads, Leads Log vs Interest Log mismatches, missing emails, leads not in the sheet, Gmail disconnected.",
+        "width": 760,
+        "height": 380,
+        "color": 5
+      }
+    },
+    {
+      "id": "note-2",
+      "name": "Note 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        680,
+        -220
+      ],
+      "parameters": {
+        "content": "## Tell people once\nNew problems email the alert list once. When a problem is gone, an **all clear** is sent.",
+        "width": 1080,
+        "height": 480,
+        "color": 6
+      }
+    },
+    {
+      "id": "note-3",
+      "name": "Note 3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        680,
+        280
+      ],
+      "parameters": {
+        "content": "## Self-heal\nLeads missing from the sheet get copied again.",
+        "width": 560,
+        "height": 260,
+        "color": 4
+      }
     }
   ],
   "connections": {

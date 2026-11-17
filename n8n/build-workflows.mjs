@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applyLayout } from './layout.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const code = (f) => fs.readFileSync(path.join(here, 'code', f), 'utf8');
@@ -437,6 +438,6 @@ const all = {
   '4-watchdog': watchdog(ids),
 };
 for (const [file, wf] of Object.entries(all)) {
-  fs.writeFileSync(path.join(out, `${file}.json`), JSON.stringify(wf, null, 2));
+  fs.writeFileSync(path.join(out, `${file}.json`), JSON.stringify(applyLayout(wf), null, 2));
 }
 console.log('wrote', Object.keys(all).join(', '));

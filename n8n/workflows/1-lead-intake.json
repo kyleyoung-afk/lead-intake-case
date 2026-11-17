@@ -8,7 +8,7 @@
       "typeVersion": 2.1,
       "position": [
         0,
-        200
+        0
       ],
       "parameters": {
         "httpMethod": "POST",
@@ -31,8 +31,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        220,
-        200
+        240,
+        0
       ],
       "parameters": {
         "jsCode": "// Clean input (Code node, run once for all items).\n// Turns the raw form payload into the values every later step relies on.\n// Every rule below exists because of something in the sample data.\nconst body = $input.first().json.body || {};\n\nconst str = (v) => (v == null ? '' : String(v));\nconst squash = (s) => str(s).replace(/\\s+/g, ' ').trim();\n\n// Email: \"John@Example.com \" and \"john@example.com\" are the same person.\nconst email = str(body.email).trim().toLowerCase();\nif (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {\n  throw new Error(`Invalid email reached n8n: \"${email}\"`);\n}\n\n// Interests: the sample has \"Api\" and \"API\" for the same thing, and\n// people type commas, semicolons, slashes or new lines.\nconst CANON = { api: 'API', apis: 'API', doc: 'Docs', docs: 'Docs', documentation: 'Docs',\n  support: 'Support', training: 'Training', trainings: 'Training' };\nconst titleCase = (s) => s.toLowerCase().replace(/\\b\\p{L}/gu, (c) => c.toUpperCase());\nconst seen = new Set();\nconst interests = [];\nfor (const raw of str(body.interests).split(/[,;\\/|\\n]+/)) {\n  const cleaned = squash(raw).replace(/^[-*•]\\s*/, '').slice(0, 50);\n  if (!cleaned) continue;\n  const key = cleaned.toLowerCase();\n  const name = CANON[key] || titleCase(cleaned);\n  if (seen.has(name.toLowerCase())) continue;\n  seen.add(name.toLowerCase());\n  interests.push(name);\n  if (interests.length >= 20) break;\n}\n\n// Urgent: the sample writes \"urgent:\" and \"urgent -\", so match the word,\n// any case, any punctuation. \"Not urgent\" is a real thing people write,\n// and sending them the urgent email would be wrong, so it counts as welcome.\nconst comment = str(body.comment).trim().slice(0, 2000);\nconst mentionsUrgent = /\\burgent(ly)?\\b/i.test(comment);\nconst negated = /\\b(not|isn'?t|no|non)[\\s-]+(that\\s+|very\\s+|super\\s+)?urgent/i.test(comment);\nconst type = mentionsUrgent && !negated ? 'urgent' : 'welcome';\n\nconst utm = squash(body.utm_source).toLowerCase().slice(0, 100) || 'direct';\n\nreturn [{\n  json: {\n    request_id: str(body.request_id),\n    full_name: squash(body.full_name).slice(0, 120),\n    email,\n    email_raw: str(body.email).slice(0, 254),\n    comment,\n    interests_raw: str(body.interests).slice(0, 1000),\n    interests,\n    interests_count: interests.length,\n    utm_source: utm,\n    type,\n    urgent_reason: mentionsUrgent ? (negated ? 'says not urgent' : 'contains \"urgent\"') : 'no \"urgent\" in comment',\n    is_test: body.is_test === true,\n  },\n}];\n"
@@ -45,8 +45,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        440,
-        200
+        480,
+        0
       ],
       "parameters": {
         "operation": "executeQuery",
@@ -72,8 +72,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        660,
-        200
+        720,
+        0
       ],
       "parameters": {
         "conditions": {
@@ -106,8 +106,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        880,
-        300
+        960,
+        0
       ],
       "parameters": {
         "operation": "executeQuery",
@@ -134,8 +134,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1100,
-        300
+        1200,
+        0
       ],
       "parameters": {
         "conditions": {
@@ -168,8 +168,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1320,
-        160
+        1440,
+        -340
       ],
       "parameters": {
         "operation": "executeQuery",
@@ -195,8 +195,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        1540,
-        160
+        1680,
+        -340
       ],
       "parameters": {
         "source": "database",
@@ -238,8 +238,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
       "position": [
-        1760,
-        160
+        1920,
+        -340
       ],
       "parameters": {
         "respondWith": "json",
@@ -255,8 +255,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
       "position": [
-        880,
-        80
+        960,
+        -340
       ],
       "parameters": {
         "respondWith": "json",
@@ -272,8 +272,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1320,
-        420
+        1440,
+        0
       ],
       "parameters": {
         "operation": "executeQuery",
@@ -299,8 +299,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1540,
-        420
+        1680,
+        0
       ],
       "parameters": {
         "jsCode": "// Build email (Code node, run once for all items).\n// The brief says the two templates are in the spreadsheet. They aren't,\n// so these are mine. Email-safe HTML: tables, inline styles, no images,\n// plus a plain-text version for clients that don't show HTML.\nconst lead = $('Clean input').first().json;\nconst esc = (s) => String(s).replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\nconst first = lead.full_name.split(' ')[0] || 'there';\nconst urgent = lead.type === 'urgent';\n\nconst NEXT = {\n  API: ['API', 'We will send setup steps and keys for your account.'],\n  Docs: ['Docs', 'Start with the quick-start guide. It takes about 10 minutes.'],\n  Support: ['Support', 'Reply to this email any time and it reaches a person.'],\n  Training: ['Training', 'We run live onboarding sessions every week. We will send dates.'],\n};\nconst steps = lead.interests.map((i) => NEXT[i] || [i, 'We will follow up with what we have on this.']);\n\n// ---- content ----------------------------------------------------------------\nconst C = urgent\n  ? {\n      subject: 'We got your urgent request',\n      preheader: 'A person on our team will contact you within 1 business hour.',\n      badge: 'URGENT REQUEST RECEIVED',\n      accent: '#c92a2a', accentSoft: '#fff5f5',\n      title: `We're on it, ${first}.`,\n      intro: 'Your message is marked urgent, so it skipped the queue. A person on our team will contact you within <strong>1 business hour</strong>.',\n    }\n  : {\n      subject: `Welcome, ${first}`,\n      preheader: 'Thanks for getting in touch. Here is what happens next.',\n      badge: 'WELCOME',\n      accent: '#3b5bdb', accentSoft: '#edf2ff',\n      title: `Thanks for reaching out, ${first}.`,\n      intro: 'We got your message and a person will reply within <strong>1 business day</strong>. Here is what happens next.',\n    };\n\nconst quote = lead.comment\n  ? `<tr><td style=\"padding:0 32px 24px\">\n       <div style=\"font-size:12px;letter-spacing:.06em;color:#667085;font-weight:600;margin:0 0 8px\">WHAT YOU WROTE</div>\n       <div style=\"border-left:3px solid ${C.accent};background:${C.accentSoft};padding:12px 16px;border-radius:0 8px 8px 0;font-size:15px;line-height:1.5;color:#14171f\">${esc(lead.comment)}</div>\n     </td></tr>`\n  : '';\n\nconst stepRows = steps.length\n  ? steps.map(([name, text]) => `\n      <tr><td style=\"padding:0 0 12px\">\n        <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>\n          <td width=\"28\" valign=\"top\" style=\"padding-top:2px\"><div style=\"width:18px;height:18px;border-radius:9px;background:${C.accent};color:#fff;font-size:11px;line-height:18px;text-align:center;font-weight:700\">&#10003;</div></td>\n          <td style=\"font-size:15px;line-height:1.5;color:#14171f\"><strong>${esc(name)}</strong><br><span style=\"color:#475467\">${esc(text)}</span></td>\n        </tr></table>\n      </td></tr>`).join('')\n  : `<tr><td style=\"font-size:15px;line-height:1.5;color:#475467\">We will reply to your message within 1 business day.</td></tr>`;\n\nconst next = urgent ? '' : `\n  <tr><td style=\"padding:0 32px 8px\">\n    <div style=\"font-size:12px;letter-spacing:.06em;color:#667085;font-weight:600;margin:0 0 12px\">WHAT HAPPENS NEXT</div>\n    <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">${stepRows}</table>\n  </td></tr>`;\n\nconst html = `<!doctype html>\n<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>${esc(C.subject)}</title></head>\n<body style=\"margin:0;padding:0;background:#f2f4f7\">\n<div style=\"display:none;max-height:0;overflow:hidden;opacity:0\">${esc(C.preheader)}</div>\n<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f2f4f7\">\n<tr><td align=\"center\" style=\"padding:32px 12px\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:560px;background:#ffffff;border-radius:14px;overflow:hidden;font-family:Arial,Helvetica,sans-serif\">\n    <tr><td style=\"background:${C.accent};height:6px;font-size:0;line-height:0\">&nbsp;</td></tr>\n    <tr><td style=\"padding:28px 32px 8px\">\n      <div style=\"font-size:15px;font-weight:700;color:#14171f\">Lead Intake</div>\n    </td></tr>\n    <tr><td style=\"padding:12px 32px 0\">\n      <span style=\"display:inline-block;background:${C.accentSoft};color:${C.accent};font-size:11px;font-weight:700;letter-spacing:.08em;padding:5px 10px;border-radius:999px\">${C.badge}</span>\n    </td></tr>\n    <tr><td style=\"padding:14px 32px 8px\">\n      <h1 style=\"margin:0;font-size:24px;line-height:1.3;color:#14171f\">${esc(C.title)}</h1>\n    </td></tr>\n    <tr><td style=\"padding:0 32px 24px;font-size:15px;line-height:1.6;color:#475467\">${C.intro}</td></tr>\n    ${quote}\n    ${next}\n    <tr><td style=\"padding:8px 32px 28px;font-size:15px;line-height:1.6;color:#475467\">\n      Anything else? Just reply to this email.<br><br>The Team\n    </td></tr>\n    <tr><td style=\"background:#f9fafb;padding:16px 32px;font-size:12px;line-height:1.5;color:#98a2b3\">\n      You are getting this because you sent us a message through our contact form.\n    </td></tr>\n  </table>\n</td></tr></table>\n</body></html>`;\n\nconst text = [\n  `Hi ${first},`, '',\n  urgent\n    ? 'Your message is marked urgent. A person on our team will contact you within 1 business hour.'\n    : 'Thanks for getting in touch. A person will reply within 1 business day.',\n  ...(lead.comment ? ['', 'What you wrote:', `\"${lead.comment}\"`] : []),\n  ...(!urgent && steps.length ? ['', 'What happens next:', ...steps.map(([n, t]) => `- ${n}: ${t}`)] : []),\n  '', 'Anything else? Just reply to this email.', '', 'The Team',\n].join('\\n');\n\n// Sandbox: test submissions and example.com addresses never reach a real\n// inbox. They go to the sandbox address with the real recipient in the subject.\nconst sandbox = lead.is_test || /@(example\\.(com|org|net)|test\\.invalid)$/i.test(lead.email);\nconst to = sandbox ? $env.LEADCASE_SANDBOX_EMAIL : lead.email;\nconst subject = sandbox ? `[SANDBOX to ${lead.email}] ${C.subject}` : C.subject;\n\nreturn [{ json: { to, subject, text, html, sandbox, type: lead.type } }];\n"
@@ -313,8 +313,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        1760,
-        420
+        1920,
+        0
       ],
       "parameters": {
         "resource": "message",
@@ -345,8 +345,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1980,
-        420
+        2160,
+        0
       ],
       "parameters": {
         "operation": "executeQuery",
@@ -372,8 +372,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        2200,
-        420
+        2400,
+        0
       ],
       "parameters": {
         "source": "database",
@@ -415,8 +415,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
       "position": [
-        2420,
-        420
+        2640,
+        0
       ],
       "parameters": {
         "respondWith": "json",
@@ -432,8 +432,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
       "position": [
-        440,
-        460
+        480,
+        300
       ],
       "parameters": {
         "respondWith": "json",
@@ -449,8 +449,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1760,
-        700
+        1440,
+        300
       ],
       "parameters": {
         "jsCode": "// Describe failure (Code node, run once for all items).\r\n// Any step's error output lands here. Turn whatever shape the error has into\r\n// three plain values so \"Mark failed\" can always record it.\r\nconst item = $input.first().json || {};\r\nconst err = item.error;\r\nconst message = String(\r\n  item.message || (err && (err.message || err.description)) || err || 'unknown error'\r\n).slice(0, 500);\r\n\r\nlet leadId = 0;\r\ntry { leadId = Number($('Add to Leads').first().json.lead_id) || 0; } catch (e) { /* failed before the lead was saved */ }\r\nlet email = '';\r\ntry { email = $('Clean input').first().json.email || ''; } catch (e) { /* failed before cleaning */ }\r\n\r\nlet failedStep = 'unknown';\r\ntry { failedStep = (err && err.node && err.node.name) || 'unknown'; } catch (e) {}\r\n\r\nreturn [{ json: { lead_id: leadId, email, note: `${failedStep}: ${message}` } }];\r\n"
@@ -462,8 +462,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1980,
-        700
+        1680,
+        300
       ],
       "parameters": {
         "operation": "executeQuery",
@@ -487,8 +487,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
       "position": [
-        2200,
-        700
+        1920,
+        300
       ],
       "parameters": {
         "respondWith": "json",
@@ -504,11 +504,107 @@
       "type": "n8n-nodes-base.stopAndError",
       "typeVersion": 1,
       "position": [
-        2420,
-        700
+        2160,
+        300
       ],
       "parameters": {
         "errorMessage": "={{ 'Lead processing failed for ' + $('Clean input').first().json.email + '. The lead is marked failed; the step that broke is shown in this run.' }}"
+      }
+    },
+    {
+      "id": "note-1",
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -140
+      ],
+      "parameters": {
+        "content": "## 1. Clean and save\nNormalize email + interests, decide urgent vs welcome.\nEvery submission goes into **Leads**, duplicates included.",
+        "width": 760,
+        "height": 300,
+        "color": 5
+      }
+    },
+    {
+      "id": "note-2",
+      "name": "Note 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        680,
+        -140
+      ],
+      "parameters": {
+        "content": "## 2. Already processed?\nOne atomic insert into **Leads Log** (email is the key).\nDouble clicks and simultaneous submits cannot both win.",
+        "width": 720,
+        "height": 300,
+        "color": 6
+      }
+    },
+    {
+      "id": "note-3",
+      "name": "Note 3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        -140
+      ],
+      "parameters": {
+        "content": "## 3. Process the lead\nOne **Interest Log** row per interest, send the Urgent or Welcome email, finish the **Leads Log** row (email, type, interests_count), copy to the Google Sheet.",
+        "width": 1520,
+        "height": 300,
+        "color": 4
+      }
+    },
+    {
+      "id": "note-4",
+      "name": "Note 4",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        880,
+        -480
+      ],
+      "parameters": {
+        "content": "## Duplicate: skip\nSame request twice, or email already processed. Logged, nothing sent.",
+        "width": 1260,
+        "height": 260,
+        "color": 7
+      }
+    },
+    {
+      "id": "note-5",
+      "name": "Note 5",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        400,
+        180
+      ],
+      "parameters": {
+        "content": "## Bad input\nReturns 400",
+        "width": 320,
+        "height": 260,
+        "color": 2
+      }
+    },
+    {
+      "id": "note-6",
+      "name": "Note 6",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        180
+      ],
+      "parameters": {
+        "content": "## Something broke\nMark the lead **failed** with the reason, tell the form, then fail the run so **Error Alerts** emails right away. Resubmitting retries it.",
+        "width": 1000,
+        "height": 260,
+        "color": 2
       }
     }
   ],

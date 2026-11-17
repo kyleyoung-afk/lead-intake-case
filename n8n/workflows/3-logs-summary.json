@@ -31,7 +31,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        220,
+        240,
         0
       ],
       "parameters": {
@@ -56,7 +56,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        440,
+        560,
         0
       ],
       "parameters": {
@@ -97,7 +97,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        660,
+        880,
         0
       ],
       "parameters": {
@@ -111,7 +111,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
       "position": [
-        880,
+        1120,
         0
       ],
       "parameters": {
@@ -128,8 +128,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
       "position": [
-        880,
-        220
+        1120,
+        280
       ],
       "parameters": {
         "respondWith": "json",
@@ -137,6 +137,54 @@
         "options": {
           "responseCode": 502
         }
+      }
+    },
+    {
+      "id": "note-1",
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -200
+      ],
+      "parameters": {
+        "content": "## 1. Facts from SQL\nThe database works out every number. The AI never does math.",
+        "width": 480,
+        "height": 360,
+        "color": 5
+      }
+    },
+    {
+      "id": "note-2",
+      "name": "Note 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        420,
+        -200
+      ],
+      "parameters": {
+        "content": "## 2. Words from Claude\nTurns the facts into 2-3 plain sentences.",
+        "width": 320,
+        "height": 360,
+        "color": 6
+      }
+    },
+    {
+      "id": "note-3",
+      "name": "Note 3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        760,
+        -200
+      ],
+      "parameters": {
+        "content": "## 3. Check the AI\nEvery number and interest it mentions must exist in the facts, or the page shows **Check failed**.",
+        "width": 560,
+        "height": 360,
+        "color": 4
       }
     }
   ],
