@@ -149,9 +149,9 @@ function intake(ids) {
     workflowId: { __rl: true, mode: 'id', value: ids.mirror || 'SET_AFTER_CREATE' },
     workflowInputs: {
       mappingMode: 'defineBelow',
-      value: { lead_id: `={{ $('Add to Leads').first().json.lead_id }}` },
+      value: { lead_id: `={{ Number($('Add to Leads').first().json.lead_id) }}` },
       schema: [{ id: 'lead_id', displayName: 'lead_id', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true, removed: false }],
-      matchingColumns: [], attemptToConvertTypes: false, convertFieldsToString: true,
+      matchingColumns: [], attemptToConvertTypes: true, convertFieldsToString: true,
     },
     options: { waitForSubWorkflow: false },
   }, { onError: 'continueRegularOutput' });
@@ -237,15 +237,21 @@ RETURNING leads.id;`,
     respond('Respond: processed', [2420, 420], 200,
       `{ status: 'processed', email: ${L('email')}, type: ${L('type')}, interests_count: ${L('interests_count')}, interests: ${L('interests')} }`),
     respond('Respond: bad input', [440, 460], 400, `{ error: 'validation_error', message: 'The form data was not valid.' }`),
+    codeNode('Describe failure', [1760, 700], 'describe-failure.js'),
     pg('Mark failed', [1980, 700],
       `WITH a AS (
-  UPDATE leads SET status = 'failed', status_note = left($2, 500) WHERE id = $1 RETURNING 1
+  -- lead id can be unknown if the run broke early; fall back to the newest
+  -- unfinished submission for this email.
+  UPDATE leads SET status = 'failed', status_note = left($2, 500)
+   WHERE id = coalesce(nullif($1::bigint, 0),
+                       (SELECT max(id) FROM leads WHERE email = $3 AND status = 'received'))
+  RETURNING 1
 ), b AS (
   UPDATE leads_log SET status = 'failed', updated_at = now()
    WHERE email = $3 AND status = 'processing' RETURNING 1
 )
 SELECT (SELECT count(*) FROM a) AS leads_marked, (SELECT count(*) FROM b) AS log_marked;`,
-      `[ $('Add to Leads').isExecuted ? ($('Add to Leads').first().json.lead_id ?? 0) : 0, String($json.error?.message ?? $json.error ?? 'unknown error'), ${L('email')} ]`,
+      `[ $json.lead_id, $json.note, $json.email ]`,
       { alwaysOutputData: true, onError: 'continueRegularOutput' }),
     respond('Respond: failed', [2200, 700], 500, `{ error: 'processing_failed', message: 'We could not finish processing this lead.' }`),
     node('Fail the run (fires alert)', 'n8n-nodes-base.stopAndError', 1, [2420, 700], {
@@ -258,25 +264,26 @@ SELECT (SELECT count(*) FROM a) AS leads_marked, (SELECT count(*) FROM b) AS log
   link(c, 'Clean input', 'Add to Leads');
   link(c, 'Clean input', 'Respond: bad input', 1);
   link(c, 'Add to Leads', 'Same request twice?');
-  link(c, 'Add to Leads', 'Mark failed', 1);
+  link(c, 'Add to Leads', 'Describe failure', 1);
   link(c, 'Same request twice?', 'Respond: same request', 0);
   link(c, 'Same request twice?', 'Claim email', 1);
   link(c, 'Claim email', 'Already processed?');
-  link(c, 'Claim email', 'Mark failed', 1);
+  link(c, 'Claim email', 'Describe failure', 1);
   link(c, 'Already processed?', 'Mark duplicate', 0);
   link(c, 'Already processed?', 'Write Interest Log', 1);
   link(c, 'Mark duplicate', 'Mirror duplicate to sheet');
-  link(c, 'Mark duplicate', 'Mark failed', 1);
+  link(c, 'Mark duplicate', 'Describe failure', 1);
   link(c, 'Mirror duplicate to sheet', 'Respond: skipped');
   link(c, 'Write Interest Log', 'Build email');
-  link(c, 'Write Interest Log', 'Mark failed', 1);
+  link(c, 'Write Interest Log', 'Describe failure', 1);
   link(c, 'Build email', 'Send email');
-  link(c, 'Build email', 'Mark failed', 1);
+  link(c, 'Build email', 'Describe failure', 1);
   link(c, 'Send email', 'Write Leads Log');
-  link(c, 'Send email', 'Mark failed', 1);
+  link(c, 'Send email', 'Describe failure', 1);
   link(c, 'Write Leads Log', 'Mirror lead to sheet');
-  link(c, 'Write Leads Log', 'Mark failed', 1);
+  link(c, 'Write Leads Log', 'Describe failure', 1);
   link(c, 'Mirror lead to sheet', 'Respond: processed');
+  link(c, 'Describe failure', 'Mark failed');
   link(c, 'Mark failed', 'Respond: failed');
   link(c, 'Respond: failed', 'Fail the run (fires alert)');
   return { name: 'Lead Intake: Form to Logs', nodes, connections: c, settings: settings({ errorWorkflow: ids.errors }) };
@@ -329,7 +336,7 @@ FROM leads_log;`, null, { ...RETRY, onError: 'continueErrorOutput' }),
       headerParameters: { parameters: [{ name: 'anthropic-version', value: '2023-06-01' }] },
       sendBody: true,
       specifyBody: 'json',
-      jsonBody: `={{ JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 400, temperature: 0, system: ${JSON.stringify(SYSTEM)}, messages: [{ role: 'user', content: 'Facts:\\n' + JSON.stringify($json.facts) }] }) }}`,
+      jsonBody: `={{ JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 400, system: ${JSON.stringify(SYSTEM)}, messages: [{ role: 'user', content: 'Facts:\\n' + JSON.stringify($json.facts) }] }) }}`,
       options: { timeout: 45000 },
     }, { credentials: cred.anthropic, ...RETRY, onError: 'continueErrorOutput' }),
     codeNode('Check summary', [660, 0], 'check-summary.js', { onError: 'continueErrorOutput' }),
@@ -397,9 +404,9 @@ SELECT (SELECT count(*) FROM o) AS opened_marked, (SELECT count(*) FROM r) AS re
       workflowId: { __rl: true, mode: 'id', value: ids.mirror || 'SET_AFTER_CREATE' },
       workflowInputs: {
         mappingMode: 'defineBelow',
-        value: { lead_id: '={{ $json.lead_id }}' },
+        value: { lead_id: '={{ Number($json.lead_id) }}' },
         schema: [{ id: 'lead_id', displayName: 'lead_id', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true, removed: false }],
-        matchingColumns: [], attemptToConvertTypes: false, convertFieldsToString: true,
+        matchingColumns: [], attemptToConvertTypes: true, convertFieldsToString: true,
       },
       mode: 'each',
       options: { waitForSubWorkflow: false },

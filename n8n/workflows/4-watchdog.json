@@ -39,6 +39,12 @@
           "timeout": 15000
         }
       },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "kZPlFz3ZMblqndTN",
+          "name": "Gmail (Kyle)"
+        }
+      },
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 3000,
@@ -138,6 +144,12 @@
           "senderName": "Lead Intake"
         }
       },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "kZPlFz3ZMblqndTN",
+          "name": "Gmail (Kyle)"
+        }
+      },
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 3000,
@@ -221,7 +233,7 @@
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "lead_id": "={{ $json.lead_id }}"
+            "lead_id": "={{ Number($json.lead_id) }}"
           },
           "schema": [
             {
@@ -236,7 +248,7 @@
             }
           ],
           "matchingColumns": [],
-          "attemptToConvertTypes": false,
+          "attemptToConvertTypes": true,
           "convertFieldsToString": true
         },
         "mode": "each",

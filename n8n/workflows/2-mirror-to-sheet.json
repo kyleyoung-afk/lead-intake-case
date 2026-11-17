@@ -61,6 +61,12 @@
         "nodeCredentialType": "googleSheetsOAuth2Api",
         "options": {}
       },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "QrADSpWsxqpGGeyH",
+          "name": "Google Sheets (Kyle)"
+        }
+      },
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 3000
@@ -96,6 +102,12 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ requests: $json.requests }) }}",
         "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "QrADSpWsxqpGGeyH",
+          "name": "Google Sheets (Kyle)"
+        }
       },
       "retryOnFail": true,
       "maxTries": 3,

@@ -104,7 +104,7 @@ app.post('/api/leads', async (req, res) => {
     const body = await r.json().catch(() => ({}));
     if (!r.ok) {
       console.error('intake failed', r.status, body);
-      return res.status(502).json({ error: 'We could not process that right now. Please try again in a minute.' });
+      return res.status(500).json({ error: 'We could not process that right now. Please try again in a minute.' });
     }
     return res.json(body);
   } catch (err) {

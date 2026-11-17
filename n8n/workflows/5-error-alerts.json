@@ -59,6 +59,12 @@
           "senderName": "Lead Intake"
         }
       },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "kZPlFz3ZMblqndTN",
+          "name": "Gmail (Kyle)"
+        }
+      },
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 3000
